@@ -5,11 +5,11 @@ open Dapper
 
 // docker pull mcr.microsoft.com/mssql/server:2019-latest
 // docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=Asdf*963" -p 1433:1433 --name sql1 -d mcr.microsoft.com/mssql/server:2019-latest
-let connection = @"User Id=SA;Password=Asdf*963;data source=localhost;Trusted_Connection=True;encrypt=false;";
-//let connection = @"Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True;";
+use db = new SqlConnection(@"User Id=SA;Password=Asdf*963;data source=localhost;Trusted_Connection=True;encrypt=false;")
+//use db = new SqlConnection(@"Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True;")
 let dbName = "testdb"
 
-type Person = { Id: int; Name: string }
+type Person = { Id: int64; Name: string }
 
 let dbInit (conn:IDbConnection) =
     dbName |> sprintf "DROP DATABASE IF EXISTS %s;" |> conn.ExecuteAsync |> Task.WaitAll
@@ -22,8 +22,8 @@ let init (conn:IDbConnection) =
         let! _ =
             """
             CREATE TABLE [Persons](
-                [Id] [INTEGER] NOT NULL PRIMARY KEY,
-                [Name] [TEXT] NOT NULL,
+                [Id] [BIGINT] NOT NULL PRIMARY KEY,
+                [Name] [TEXT] NOT NULL
             )
             """
             |> conn.ExecuteAsync
@@ -113,7 +113,6 @@ let complexTaskAsync (conn:IDbConnection) =
         return ()
     }
 
-use db = new SqlConnection(connection)
 try
     db.Open()
     dbInit db

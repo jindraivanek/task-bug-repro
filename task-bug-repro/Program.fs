@@ -3,20 +3,18 @@ open System.Data.SqlClient
 open System.Threading.Tasks
 open Dapper
 
-// docker pull mcr.microsoft.com/mssql/server:2017-latest-ubuntu
-// docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=<YourStrong!Passw0rd>" -p 1433:1433 --name sql1 -d mcr.microsoft.com/mssql/server:2017-latest-ubuntu
-let connection = @"Data Source=localhost,1433;Database=master;User=sa;Password=<YourStrong!Passw0rd>;";
+// docker pull mcr.microsoft.com/mssql/server:2019-latest
+// docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=Asdf*963" -p 1433:1433 --name sql1 -d mcr.microsoft.com/mssql/server:2019-latest
+let connection = @"User Id=SA;Password=Asdf*963;data source=localhost;Trusted_Connection=True;encrypt=false;";
+//let connection = @"Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True;";
 let dbName = "testdb"
 
-use db = new SqlConnection(connection)
+type Person = { Id: int; Name: string }
 
 let dbInit (conn:IDbConnection) =
     dbName |> sprintf "DROP DATABASE IF EXISTS %s;" |> conn.ExecuteAsync |> Task.WaitAll
     dbName |> sprintf "CREATE DATABASE %s;" |> conn.ExecuteAsync |> Task.WaitAll
-    conn.Open()
     conn.ChangeDatabase dbName
-
-dbInit db
 
 let init (conn:IDbConnection) =
     task {
@@ -25,45 +23,107 @@ let init (conn:IDbConnection) =
             """
             CREATE TABLE [Persons](
                 [Id] [INTEGER] NOT NULL PRIMARY KEY,
+                [Name] [TEXT] NOT NULL,
             )
             """
             |> conn.ExecuteAsync
         return ()
     }
 
-init db |> Task.WaitAll
 
 let insertValues (conn:IDbConnection) =
     task {
-        let! _ = "INSERT INTO Persons VALUES (1)" |> conn.ExecuteAsync
-        let! _ = "INSERT INTO Persons VALUES (2)" |> conn.ExecuteAsync
+        let! _ = "INSERT INTO Persons VALUES (1, 'Bob')" |> conn.ExecuteAsync
+        let! _ = "INSERT INTO Persons VALUES (2, 'Builder')" |> conn.ExecuteAsync
         return ()
     }
 
-let complexTask() =
+let printValues (conn:IDbConnection) =
     task {
-        let rs = Persons.View.generate 10
+        let! rs = "SELECT * FROM Persons" |> conn.QueryAsync<Person>
+        rs |> Seq.iter (printfn "%A")
+        return rs
+    }
+
+let complexTask (conn:IDbConnection) =
+    task {
         let! _ =
-            insert {
-                into personsView
-                values rs
-            } |> conn.InsertAsync
-        let! fromDb =
             task {
-                let updateItem (rs: Persons.View list) f i = task {
-                    let! x = f (rs |> Seq.find (fun p -> p.Position = i))
-                    return!
-                        update {
-                            for p in personsView do
-                            set x
-                            where (p.Position = i)
-                        } |> conn.UpdateOutputAsync<Persons.View, {| Id:Guid |}>
+                let updateItem f i = task {
+                    let! name = f()
+                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
+                    return () // this line is hit only once
                 }
-                let! _ = updateItem rs (fun p -> task { return { p with LastName = "UPDATED3" }}) 3
-                let! x = updateItem rs (fun p -> task { return { p with LastName = "UPDATED" }}) 2
+                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1
+                let! x = updateItem (fun _ -> task { return "UPDATED" }) 2 // we never hit this line
                 return x
             }
-        let pos2Id = rs |> List.pick (fun p -> if p.Position = 2 then Some p.Id else None)
-
-        Assert.AreEqual(pos2Id, fromDb |> Seq.head |> fun (p:{| Id:Guid |}) -> p.Id)
+        return ()
     }
+
+// this works
+let complexTaskNoDapperAsyncCall (conn:IDbConnection) =
+    task {
+        let! _ =
+            task {
+                let updateItem f i = task {
+                    let execute (q: string) = task { return conn.Execute q }
+                    let! name = f()
+                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> execute
+                    return ()
+                }
+                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1
+                let! x = updateItem (fun _ -> task { return"UPDATED" }) 2
+                return x
+            }
+        return ()
+    }
+
+// this works
+let complexTaskOneTaskSmaller (conn:IDbConnection) =
+    task {
+        let! _ =
+            task {
+                let updateItem f i = task {
+                    let name = f()
+                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
+                    return ()
+                }
+                let! _ = updateItem (fun _ -> "UPDATED1") 1
+                let! x = updateItem (fun _ -> "UPDATED") 2
+                return x
+            }
+        return ()
+    }
+
+// this works
+let complexTaskAsync (conn:IDbConnection) =
+    task {
+        let! _ =
+            async {
+                let updateItem f i = task {
+                    let! name = f()
+                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
+                    return ()
+                }
+                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1 |> Async.AwaitTask
+                let! x = updateItem (fun _ -> task { return"UPDATED" }) 2 |> Async.AwaitTask
+                return x
+            }
+        return ()
+    }
+
+use db = new SqlConnection(connection)
+try
+    db.Open()
+    dbInit db
+    init db |> Task.WaitAll
+    insertValues db |> Task.WaitAll
+    printValues db |> Task.WaitAll
+    complexTask db |> Task.WaitAll
+    //complexTaskNoDapperAsyncCall db |> Task.WaitAll
+    //complexTaskAsync db |> Task.WaitAll
+    //complexTaskOneTaskSmaller db |> Task.WaitAll
+    printValues db |> Task.WaitAll
+finally
+    db.Close()

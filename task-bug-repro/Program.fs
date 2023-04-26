@@ -120,7 +120,7 @@ try
     init db |> Task.WaitAll
     insertValues db |> Task.WaitAll
     printValues db |> Task.WaitAll
-    complexTask db |> Task.WaitAll
+    complexTask db |> Task.WaitAll // this task don't finish
     //complexTaskNoDapperAsyncCall db |> Task.WaitAll
     //complexTaskAsync db |> Task.WaitAll
     //complexTaskOneTaskSmaller db |> Task.WaitAll

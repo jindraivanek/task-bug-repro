@@ -45,73 +45,59 @@ let printValues (conn:IDbConnection) =
         return rs
     }
 
-let complexTask (conn:IDbConnection) =
+let repro (conn:IDbConnection) =
     task {
-        let! _ =
-            task {
-                let updateItem f i = task {
-                    let! name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
-                    return () // this line is hit only once
-                }
-                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1
-                let! x = updateItem (fun _ -> task { return "UPDATED" }) 2 // we never hit this line
-                return x
-            }
+        let hof f = task { return! f() }
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync
+        printfn $"Task completed (line {__LINE__})" // we never hit this line
         return ()
-    }
+}
 
 // this works
-let complexTaskNoDapperAsyncCall (conn:IDbConnection) =
+let explicitType (conn:IDbConnection) =
     task {
-        let! _ =
-            task {
-                let updateItem f i = task {
-                    let execute (q: string) = task { return conn.Execute q }
-                    let! name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> execute
-                    return ()
-                }
-                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1
-                let! x = updateItem (fun _ -> task { return"UPDATED" }) 2
-                return x
-            }
+        let hof (f: _ -> Task<_>) = task { return! f() }
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync
+        printfn $"Task completed (line {__LINE__})"
         return ()
-    }
+}
 
 // this works
-let complexTaskOneTaskSmaller (conn:IDbConnection) =
+let noDapperAsyncCall (conn:IDbConnection) =
     task {
-        let! _ =
-            task {
-                let updateItem f i = task {
-                    let name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
-                    return ()
-                }
-                let! _ = updateItem (fun _ -> "UPDATED1") 1
-                let! x = updateItem (fun _ -> "UPDATED") 2
-                return x
-            }
+        let hof f = task { return! f() }
+        let execute (q: string) = task { return conn.Execute q }
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> execute
+        printfn $"Task completed (line {__LINE__})"
         return ()
-    }
+}
 
 // this works
-let complexTaskAsync (conn:IDbConnection) =
+let hofDefinedAfter (conn:IDbConnection) =
     task {
-        let! _ =
-            async {
-                let updateItem f i = task {
-                    let! name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
-                    return ()
-                }
-                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1 |> Async.AwaitTask
-                let! x = updateItem (fun _ -> task { return"UPDATED" }) 2 |> Async.AwaitTask
-                return x
-            }
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync
+        let hof f = task { return! f() }
+        printfn $"Task completed (line {__LINE__})"
         return ()
-    }
+}
+
+// this works
+let hofAsync (conn:IDbConnection) =
+    task {
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync
+        let hof f = async { return! f() }
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
+
+// this works
+let asAsync (conn:IDbConnection) =
+    async {
+        let hof f = async { return! f() }
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync |> Async.AwaitTask
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
 
 try
     db.Open()
@@ -119,10 +105,12 @@ try
     init db |> Task.WaitAll
     insertValues db |> Task.WaitAll
     printValues db |> Task.WaitAll
-    complexTask db |> Task.WaitAll // this task don't finish
-    //complexTaskNoDapperAsyncCall db |> Task.WaitAll
-    //complexTaskAsync db |> Task.WaitAll
-    //complexTaskOneTaskSmaller db |> Task.WaitAll
+    repro db |> Task.WaitAll // this task don't finish
+    explicitType db |> Task.WaitAll
+    noDapperAsyncCall db |> Task.WaitAll
+    hofDefinedAfter db |> Task.WaitAll
+    hofAsync db |> Task.WaitAll
+    asAsync db |> Async.RunSynchronously
     printValues db |> Task.WaitAll
 finally
     db.Close()

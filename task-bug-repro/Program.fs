@@ -1,128 +1,41 @@
-﻿open System.Data
-open System.Data.SqlClient
-open System.Threading.Tasks
-open Dapper
+﻿open System.Threading.Tasks
 
-// docker pull mcr.microsoft.com/mssql/server:2019-latest
-// docker run -e "ACCEPT_EULA=Y" -e "SA_PASSWORD=Asdf*963" -p 1433:1433 --name sql1 -d mcr.microsoft.com/mssql/server:2019-latest
-use db = new SqlConnection(@"User Id=SA;Password=Asdf*963;data source=localhost;Trusted_Connection=True;encrypt=false;")
-//use db = new SqlConnection(@"Server=localhost;Database=master;Trusted_Connection=True;TrustServerCertificate=True;")
-let dbName = "testdb"
-
-type Person = { Id: int64; Name: string }
-
-let dbInit (conn:IDbConnection) =
-    dbName |> sprintf "DROP DATABASE IF EXISTS %s;" |> conn.ExecuteAsync |> Task.WaitAll
-    dbName |> sprintf "CREATE DATABASE %s;" |> conn.ExecuteAsync |> Task.WaitAll
-    conn.ChangeDatabase dbName
-
-let init (conn:IDbConnection) =
+// Throws exception:
+(*
+Unhandled exception. System.AggregateException: One or more errors occurred. (Object reference not set to an instance of an object.)
+ ---> System.NullReferenceException: Object reference not set to an instance of an object.
+   at Microsoft.FSharp.Control.TaskBuilderExtensions.HighPriority.TaskBuilderBase.BindDynamic.Static[TOverall,TResult1,TResult2](ResumableStateMachine`1& sm, Task`1 task
+, FSharpFunc`2 continuation) in D:\a\_work\1\s\src\FSharp.Core\tasks.fs:line 413
+   at Program.repro@4.MoveNext() in C:\dev\Repro\task-bug-repro\task-bug-repro\Program.fs:line 10
+   --- End of inner exception stack trace ---
+   at System.Threading.Tasks.Task.WaitAllCore(Task[] tasks, Int32 millisecondsTimeout, CancellationToken cancellationToken)
+   at System.Threading.Tasks.Task.WaitAll(Task[] tasks)
+   at <StartupCode$task-bug-repro>.$Program.main@() in C:\dev\Repro\task-bug-repro\task-bug-repro\Program.fs:line 28
+*)
+let repro () =
     task {
-        let! _ = "DROP TABLE IF EXISTS Persons" |> conn.ExecuteAsync
-        let! _ =
-            """
-            CREATE TABLE [Persons](
-                [Id] [BIGINT] NOT NULL PRIMARY KEY,
-                [Name] [TEXT] NOT NULL
-            )
-            """
-            |> conn.ExecuteAsync
-        return ()
-    }
-
-
-let insertValues (conn:IDbConnection) =
-    task {
-        let! _ = "INSERT INTO Persons VALUES (1, 'Bob')" |> conn.ExecuteAsync
-        let! _ = "INSERT INTO Persons VALUES (2, 'Builder')" |> conn.ExecuteAsync
-        return ()
-    }
-
-let printValues (conn:IDbConnection) =
-    task {
-        let! rs = "SELECT * FROM Persons" |> conn.QueryAsync<Person>
-        rs |> Seq.iter (printfn "%A")
-        return rs
-    }
-
-let complexTask (conn:IDbConnection) =
-    task {
-        let! _ =
-            task {
-                let updateItem f i = task {
-                    let! name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
-                    return () // this line is hit only once
+        //let hof (f: _ -> Task<_>) = task { // this fixes it
+        let hof f = task {
+                    let! x = f ()
+                    return x
                 }
-                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1
-                let! x = updateItem (fun _ -> task { return "UPDATED" }) 2 // we never hit this line
-                return x
-            }
+        let! _ = async { return () }
+        printfn $"Task completed (line {__LINE__})"
         return ()
     }
 
-// this works
-let complexTaskNoDapperAsyncCall (conn:IDbConnection) =
+repro () |> Task.WaitAll
+
+// internal error: The local field ResumptionDynamicInfo was referenced but not declared
+let internalError () =
     task {
-        let! _ =
-            task {
-                let updateItem f i = task {
-                    let execute (q: string) = task { return conn.Execute q }
-                    let! name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> execute
-                    return ()
+        //let hof (f: _ -> Task<_>) = task { // this fixes it
+        let hof f = task {
+                    let! x = f ()
+                    return x
                 }
-                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1
-                let! x = updateItem (fun _ -> task { return"UPDATED" }) 2
-                return x
-            }
+        // uncomment to get internal error: The local field ResumptionDynamicInfo was referenced but not declared
+        //let! _ = Task.Delay 1000
+        printfn $"Task completed (line {__LINE__})"
         return ()
     }
-
-// this works
-let complexTaskOneTaskSmaller (conn:IDbConnection) =
-    task {
-        let! _ =
-            task {
-                let updateItem f i = task {
-                    let name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
-                    return ()
-                }
-                let! _ = updateItem (fun _ -> "UPDATED1") 1
-                let! x = updateItem (fun _ -> "UPDATED") 2
-                return x
-            }
-        return ()
-    }
-
-// this works
-let complexTaskAsync (conn:IDbConnection) =
-    task {
-        let! _ =
-            async {
-                let updateItem f i = task {
-                    let! name = f()
-                    let! _ = $"UPDATE Persons SET Name = '{name}' WHERE Id = {i}" |> conn.ExecuteAsync
-                    return ()
-                }
-                let! _ = updateItem (fun _ -> task { return "UPDATED1" }) 1 |> Async.AwaitTask
-                let! x = updateItem (fun _ -> task { return"UPDATED" }) 2 |> Async.AwaitTask
-                return x
-            }
-        return ()
-    }
-
-try
-    db.Open()
-    dbInit db
-    init db |> Task.WaitAll
-    insertValues db |> Task.WaitAll
-    printValues db |> Task.WaitAll
-    complexTask db |> Task.WaitAll // this task don't finish
-    //complexTaskNoDapperAsyncCall db |> Task.WaitAll
-    //complexTaskAsync db |> Task.WaitAll
-    //complexTaskOneTaskSmaller db |> Task.WaitAll
-    printValues db |> Task.WaitAll
-finally
-    db.Close()

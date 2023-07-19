@@ -15,10 +15,7 @@ Unhandled exception. System.AggregateException: One or more errors occurred. (Ob
 let repro () =
     task {
         //let hof (f: _ -> Task<_>) = task { // this fixes it
-        let hof f = task {
-                    let! x = f ()
-                    return x
-                }
+        let hof f = task { return! f () }
         let! _ = async { return () }
         printfn $"Task completed (line {__LINE__})"
         return ()
@@ -30,12 +27,9 @@ repro () |> Task.WaitAll
 let internalError () =
     task {
         //let hof (f: _ -> Task<_>) = task { // this fixes it
-        let hof f = task {
-                    let! x = f ()
-                    return x
-                }
+        let hof f = task { return! f () }
         // uncomment to get internal error: The local field ResumptionDynamicInfo was referenced but not declared
-        //let! _ = Task.Delay 1000
+        // let! _ = Task.Delay 1000
         printfn $"Task completed (line {__LINE__})"
         return ()
     }

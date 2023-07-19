@@ -54,6 +54,16 @@ let repro (conn:IDbConnection) =
 }
 
 // this works
+let noDapperAsyncCall (conn:IDbConnection) =
+    task {
+        let hof f = task { return! f() }
+        let execute (q: string) = task { return conn.Execute q }
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> execute
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
+
+// this works
 let explicitType (conn:IDbConnection) =
     task {
         let hof (f: _ -> Task<_>) = task { return! f() }
@@ -63,11 +73,10 @@ let explicitType (conn:IDbConnection) =
 }
 
 // this works
-let noDapperAsyncCall (conn:IDbConnection) =
+let hofOutsideTask (conn:IDbConnection) =
+    let hof f = task { return! f() }
     task {
-        let hof f = task { return! f() }
-        let execute (q: string) = task { return conn.Execute q }
-        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> execute
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync
         printfn $"Task completed (line {__LINE__})"
         return ()
 }
@@ -84,8 +93,8 @@ let hofDefinedAfter (conn:IDbConnection) =
 // this works
 let hofAsync (conn:IDbConnection) =
     task {
-        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync
         let hof f = async { return! f() }
+        let! _ = $"UPDATE Persons SET Name = 'BOO' WHERE Id = 1" |> conn.ExecuteAsync
         printfn $"Task completed (line {__LINE__})"
         return ()
 }
@@ -106,8 +115,9 @@ try
     insertValues db |> Task.WaitAll
     printValues db |> Task.WaitAll
     repro db |> Task.WaitAll // this task don't finish
-    explicitType db |> Task.WaitAll
     noDapperAsyncCall db |> Task.WaitAll
+    explicitType db |> Task.WaitAll
+    hofOutsideTask db |> Task.WaitAll
     hofDefinedAfter db |> Task.WaitAll
     hofAsync db |> Task.WaitAll
     asAsync db |> Async.RunSynchronously

@@ -14,14 +14,63 @@ Unhandled exception. System.AggregateException: One or more errors occurred. (Ob
 *)
 let repro () =
     task {
-        //let hof (f: _ -> Task<_>) = task { // this fixes it
         let hof f = task { return! f () }
         let! _ = async { return () }
         printfn $"Task completed (line {__LINE__})"
         return ()
     }
+    
+// this works
+let explicitType () =
+    task {
+        let hof (f: _ -> Task<_>) = task { return! f() }
+        let! _ = async { return () }
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
+
+// this works
+let hofOutsideTask () =
+    let hof f = task { return! f() }
+    task {
+        let! _ = async { return () }
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
+
+// this works
+let hofDefinedAfter () =
+    task {
+        let! _ = async { return () }
+        let hof f = task { return! f() }
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
+
+// this works
+let hofAsync () =
+    task {
+        let! _ = async { return () }
+        let hof f = async { return! f() }
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
+
+// this works
+let asAsync () =
+    async {
+        let hof f = async { return! f() }
+        let! _ = async { return () }
+        printfn $"Task completed (line {__LINE__})"
+        return ()
+}
 
 repro () |> Task.WaitAll
+explicitType () |> Task.WaitAll
+hofOutsideTask () |> Task.WaitAll
+hofDefinedAfter () |> Task.WaitAll
+hofAsync () |> Task.WaitAll
+asAsync () |> Async.RunSynchronously
 
 // internal error: The local field ResumptionDynamicInfo was referenced but not declared
 let internalError () =
